@@ -5,7 +5,7 @@ import { startWorker } from "jazz-tools/worker";
 import { data as data2 } from "./data2.ts";
 import { data as data1 } from "./data.ts";
 import { Group } from "jazz-tools";
-import { InvertedIndexData } from "./inverted-index.ts";
+import { createInvertedIndex } from "./inverted-index.ts";
 import { JazzFuzzyIndex } from "./fuzzy-index.ts";
 
 const env = cleanEnv(process.env, {
@@ -29,10 +29,7 @@ const upsertData = async (
     text: string;
   }[],
 ) => {
-  const index = InvertedIndexData.create(
-    { postings: {}, meta: {} },
-    { owner: group },
-  );
+  const index = createInvertedIndex(group);
 
   const fuzzyIndex = new JazzFuzzyIndex(index);
 

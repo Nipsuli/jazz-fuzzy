@@ -187,7 +187,7 @@ export class JazzFuzzyIndex {
     totalDocs: number,
     avgDocLength: number,
   ): number {
-    const docMeta = this.index.meta[docId];
+    const docMeta = this.index.docMeta[docId];
     if (!docMeta) {
       return 0;
     }
@@ -315,14 +315,11 @@ export class JazzFuzzyIndex {
     const candidateTime = candidateEnd - candidateStart;
     const finalCandidateSize = candidateSet.size;
 
-    // Calculate corpus metadata
+    // Calculate corpus metadata using pre-calculated statistics
     const corpusMetaStart = performance.now();
-    const totalDocs = Object.keys(this.index.meta).length;
+    const totalDocs = this.index.corpusStats.totalDocuments;
     const avgDocLength =
-      Object.values(this.index.meta).reduce(
-        (sum, doc) => sum + doc.termCount,
-        0,
-      ) / totalDocs;
+      totalDocs > 0 ? this.index.corpusStats.totalTermCount / totalDocs : 0;
     const corpusMetaEnd = performance.now();
     const corpusMetaTime = corpusMetaEnd - corpusMetaStart;
 

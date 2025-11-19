@@ -4,7 +4,7 @@ import { startWorker } from "jazz-tools/worker";
 
 import { queries as queries2, data as data2 } from "./data2.ts";
 import { queries as queries1, data as data1 } from "./data.ts";
-import { InvertedIndexData } from "./inverted-index.ts";
+import { loadInvertedIndex } from "./inverted-index.ts";
 import { JazzFuzzyIndex } from "./fuzzy-index.ts";
 
 const env = cleanEnv(process.env, {
@@ -21,7 +21,7 @@ const { worker, shutdownWorker } = await startWorker({
 });
 
 const datasets = [
-  { indexId: "co_zCb9GCGaDuQeZzbbUbCq64wJGGk", queries: queries1, data: data1 },
+  { indexId: "co_zA1U8fuJivo8GUHCCPxsZGToEv5", queries: queries1, data: data1 },
   { indexId: "co_", queries: queries2, data: data2 },
 ];
 
@@ -31,30 +31,9 @@ if (!runData) {
 }
 
 console.log("Loading index...");
-
-const index = await InvertedIndexData.load(runData.indexId, {
-  resolve: {
-    meta: {
-      $each: true,
-    },
-    postings: {
-      $each: {
-        postings: {
-          $each: true,
-        },
-      },
-    },
-  },
-  loadAs: worker,
-});
-
-if (!index.$isLoaded) {
-  throw new Error("Index not loaded");
-}
-
-console.log("Index loaded");
-
+const index = await loadInvertedIndex(runData.indexId, worker);
 const fuzzyIndex = new JazzFuzzyIndex(index);
+console.log("Index loaded");
 
 const queries = runData.queries;
 const data = runData.data;

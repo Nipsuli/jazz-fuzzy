@@ -1,5 +1,5 @@
 import { co, z } from "jazz-tools";
-import type { Loaded } from "jazz-tools";
+import type { Account, Group, Loaded } from "jazz-tools";
 import xxhash from "xxhash-wasm";
 
 const { h64ToString } = await xxhash();
@@ -9,7 +9,7 @@ export type Doc = {
   terms: string[];
 };
 
-const InvertedIndexMeta = co.record(
+const InvertedIndexDocMeta = co.record(
   // DocId
   z.string(),
   z.object({
@@ -33,18 +33,28 @@ const InvertedIndexTermMeta = co.map({
   postings: InvertedIndexPostingData,
 });
 
+const InvertedIndexCorpusStats = co.map({
+  totalDocuments: z.number(),
+  totalTermCount: z.number(),
+});
+
 export const InvertedIndexData = co.map({
-  meta: InvertedIndexMeta,
+  docMeta: InvertedIndexDocMeta,
   postings: co.record(
     // Term
     z.string(),
     InvertedIndexTermMeta,
   ),
+  corpusStats: InvertedIndexCorpusStats,
 });
 
 export type LoadedInvertedIndex = Loaded<
   typeof InvertedIndexData,
-  { meta: { $each: true }; postings: { $each: { postings: { $each: true } } } }
+  {
+    docMeta: { $each: true };
+    postings: { $each: { postings: { $each: true } } };
+    corpusStats: true;
+  }
 >;
 
 export const calculateTermMeta = (terms: string[]) => {
@@ -106,7 +116,19 @@ const writeTermDocPosting =
 
 export const addToInvertedIndex =
   (index: LoadedInvertedIndex) => (doc: Doc) => {
-    index.meta.$jazz.set(doc.id, calculateDocMeta(doc.terms));
+    const docMeta = calculateDocMeta(doc.terms);
+    index.docMeta.$jazz.set(doc.id, docMeta);
+
+    // Update corpus statistics
+    index.corpusStats.$jazz.set(
+      "totalDocuments",
+      index.corpusStats.totalDocuments + 1,
+    );
+    index.corpusStats.$jazz.set(
+      "totalTermCount",
+      index.corpusStats.totalTermCount + doc.terms.length,
+    );
+
     const meta = calculateTermMeta(doc.terms);
     const writer = writeTermDocPosting(index)(doc.id);
     for (const [term, termMeta] of Object.entries(meta)) {
@@ -116,10 +138,20 @@ export const addToInvertedIndex =
 
 export const removeFromInvertedIndex =
   (index: LoadedInvertedIndex) => (docId: string) => {
-    const docMeta = index.meta[docId];
+    const docMeta = index.docMeta[docId];
     if (!docMeta) {
       return;
     }
+
+    // Update corpus statistics
+    index.corpusStats.$jazz.set(
+      "totalDocuments",
+      Math.max(0, index.corpusStats.totalDocuments - 1),
+    );
+    index.corpusStats.$jazz.set(
+      "totalTermCount",
+      Math.max(0, index.corpusStats.totalTermCount - docMeta.termCount),
+    );
 
     for (const term of docMeta.uniqueTerms) {
       const termEntry = index.postings[term];
@@ -128,12 +160,12 @@ export const removeFromInvertedIndex =
         termEntry.$jazz.set("docCount", termEntry.docCount - 1);
       }
     }
-    index.meta.$jazz.delete(docId);
+    index.docMeta.$jazz.delete(docId);
   };
 
 export const upsertToInvertedIndex =
   (index: LoadedInvertedIndex) => (doc: Doc) => {
-    const oldDoc = index.meta[doc.id];
+    const oldDoc = index.docMeta[doc.id];
     if (!oldDoc) {
       addToInvertedIndex(index)(doc);
       return;
@@ -142,6 +174,13 @@ export const upsertToInvertedIndex =
     if (docMeta.hash === oldDoc.hash) {
       return;
     }
+
+    // Update corpus statistics - adjust term count difference
+    const termCountDifference = doc.terms.length - oldDoc.termCount;
+    index.corpusStats.$jazz.set(
+      "totalTermCount",
+      index.corpusStats.totalTermCount + termCountDifference,
+    );
 
     const termsToRemove = oldDoc.uniqueTerms.filter(
       (term) => !docMeta.uniqueTerms.includes(term),
@@ -155,10 +194,44 @@ export const upsertToInvertedIndex =
       }
     }
 
-    index.meta.$jazz.set(doc.id, docMeta);
+    index.docMeta.$jazz.set(doc.id, docMeta);
     const meta = calculateTermMeta(doc.terms);
     const writer = writeTermDocPosting(index)(doc.id);
     for (const [term, termMeta] of Object.entries(meta)) {
       writer({ term, termMeta });
     }
   };
+
+export const createInvertedIndex = (owner: Group) => {
+  const corpusStats = InvertedIndexCorpusStats.create(
+    {
+      totalDocuments: 0,
+      totalTermCount: 0,
+    },
+    { owner },
+  );
+
+  return InvertedIndexData.create(
+    {
+      postings: {},
+      docMeta: {},
+      corpusStats,
+    },
+    { owner },
+  );
+};
+
+export const loadInvertedIndex = async (id: string, loadAs?: Account) => {
+  const index = await InvertedIndexData.load(id, {
+    resolve: {
+      docMeta: { $each: true },
+      postings: { $each: { postings: { $each: true } } },
+      corpusStats: true,
+    },
+    loadAs,
+  });
+  if (!index.$isLoaded) {
+    throw new Error(`Inverted index ${id} not found`);
+  }
+  return index;
+};
