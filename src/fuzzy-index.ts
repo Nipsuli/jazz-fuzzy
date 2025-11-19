@@ -81,15 +81,27 @@ export class JazzFuzzyIndex {
     upsertToInvertedIndex(this.index)({ id: doc.id, terms: ngrams });
   }
 
-  private computeDocumentFrequencies(ngrams: string[]): DocumentFrequencies {
+  private getSortedNgramsWithCache(uniqueQueryNgrams: string[]): {
+    sortedNgrams: string[];
+    docFreqs: DocumentFrequencies;
+  } {
     const docFreqs = new Map<string, number>();
+    const ngramSizes: Array<{ ngram: string; size: number }> = [];
 
-    for (const ngram of ngrams) {
-      const postings = this.index.postings[ngram];
-      const docCount = postings ? Object.keys(postings).length : 0;
+    // Single pass to collect both sorting data and document frequencies
+    for (const ngram of uniqueQueryNgrams) {
+      const termEntry = this.index.postings[ngram];
+      const docCount = termEntry ? termEntry.docCount : 0;
       docFreqs.set(ngram, docCount);
+      ngramSizes.push({ ngram, size: docCount });
     }
-    return docFreqs;
+
+    // Sort by document count (rarest first)
+    const sortedNgrams = ngramSizes
+      .sort((a, b) => a.size - b.size)
+      .map((item) => item.ngram);
+
+    return { sortedNgrams, docFreqs };
   }
 
   private calculateBM25Score(
@@ -204,7 +216,8 @@ export class JazzFuzzyIndex {
 
       // Position component using relative positioning
       const queryMeta = ngramMeta[ngram];
-      const docPosting = this.index.postings[ngram]?.[docId];
+      const termEntry = this.index.postings[ngram];
+      const docPosting = termEntry?.postings?.[docId];
       if (queryMeta && docPosting) {
         positionScore += this.calculateRelativePositionScore(
           queryMeta.positions,
@@ -270,11 +283,8 @@ export class JazzFuzzyIndex {
     const ngramMetaTime = ngramMetaEnd - ngramMetaStart;
 
     const ngramSortingStart = performance.now();
-    const sortedNgrams = uniqueQueryNgrams.sort((a, b) => {
-      const aSize = Object.keys(this.index.postings[a] || {}).length;
-      const bSize = Object.keys(this.index.postings[b] || {}).length;
-      return aSize - bSize; // Rarest first
-    });
+    const { sortedNgrams, docFreqs } =
+      this.getSortedNgramsWithCache(uniqueQueryNgrams);
     const ngramSortingEnd = performance.now();
     const ngramSortingTime = ngramSortingEnd - ngramSortingStart;
 
@@ -286,12 +296,12 @@ export class JazzFuzzyIndex {
 
     // Process ngrams in order of rarity, expanding candidate set until we hit target size
     for (const ngram of sortedNgrams) {
-      const postings = this.index.postings[ngram];
-      if (!postings) {
+      const termEntry = this.index.postings[ngram];
+      if (!termEntry || !termEntry.postings) {
         // Ngram not found - skip this ngram
         continue;
       }
-      for (const docId of Object.keys(postings)) {
+      for (const docId of Object.keys(termEntry.postings)) {
         candidateSet.add(docId);
       }
       if (candidateSet.size >= maxCandidates) {
@@ -305,7 +315,6 @@ export class JazzFuzzyIndex {
 
     // Calculate comprehensive scores
     const qualityStart = performance.now();
-    const docFreqs = this.computeDocumentFrequencies(uniqueQueryNgrams);
     const totalDocs = Object.keys(this.index.meta).length;
     const avgDocLength =
       Object.values(this.index.meta).reduce(
@@ -318,7 +327,8 @@ export class JazzFuzzyIndex {
 
       // Collect matched ngrams for this document
       for (const ngram of uniqueQueryNgrams) {
-        const posting = this.index.postings[ngram]?.[docId];
+        const termEntry = this.index.postings[ngram];
+        const posting = termEntry?.postings?.[docId];
         matchedNgrams.set(ngram, posting?.frequency || 0);
       }
 

@@ -21,8 +21,8 @@ const { worker, shutdownWorker } = await startWorker({
 });
 
 const datasets = [
-  { indexId: "co_zZ5jeWg9CKFHxuRmu8jcWSqVWrJ", queries: queries1, data: data1 },
-  { indexId: "co_znokVBDCP1xwiaT4dkXwGJnNNVF", queries: queries2, data: data2 },
+  { indexId: "co_zCb9GCGaDuQeZzbbUbCq64wJGGk", queries: queries1, data: data1 },
+  { indexId: "co_", queries: queries2, data: data2 },
 ];
 
 const runData = datasets[0];
@@ -39,7 +39,9 @@ const index = await InvertedIndexData.load(runData.indexId, {
     },
     postings: {
       $each: {
-        $each: true,
+        postings: {
+          $each: true,
+        },
       },
     },
   },

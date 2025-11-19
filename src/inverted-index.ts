@@ -28,18 +28,23 @@ const InvertedIndexPostingData = co.record(
   }),
 );
 
+const InvertedIndexTermMeta = co.map({
+  docCount: z.number(),
+  postings: InvertedIndexPostingData,
+});
+
 export const InvertedIndexData = co.map({
   meta: InvertedIndexMeta,
   postings: co.record(
     // Term
     z.string(),
-    InvertedIndexPostingData,
+    InvertedIndexTermMeta,
   ),
 });
 
 export type LoadedInvertedIndex = Loaded<
   typeof InvertedIndexData,
-  { meta: { $each: true }; postings: { $each: true } }
+  { meta: { $each: true }; postings: { $each: { postings: { $each: true } } } }
 >;
 
 export const calculateTermMeta = (terms: string[]) => {
@@ -78,15 +83,25 @@ const writeTermDocPosting =
       positions: number[];
     };
   }) => {
-    let termPosting = index.postings[term];
-    if (!termPosting) {
-      termPosting = InvertedIndexPostingData.create(
+    let termEntry = index.postings[term];
+    if (!termEntry) {
+      const postings = InvertedIndexPostingData.create(
         {},
         { owner: index.$jazz.owner },
       );
-      index.postings.$jazz.set(term, termPosting);
+      termEntry = InvertedIndexTermMeta.create(
+        { docCount: 0, postings },
+        { owner: index.$jazz.owner },
+      );
+      index.postings.$jazz.set(term, termEntry);
     }
-    termPosting.$jazz.set(docId, termMeta);
+
+    const wasNew = !termEntry.postings[docId];
+    termEntry.postings.$jazz.set(docId, termMeta);
+
+    if (wasNew) {
+      termEntry.$jazz.set("docCount", termEntry.docCount + 1);
+    }
   };
 
 export const addToInvertedIndex =
@@ -107,9 +122,10 @@ export const removeFromInvertedIndex =
     }
 
     for (const term of docMeta.uniqueTerms) {
-      const posting = index.postings[term];
-      if (posting) {
-        posting.$jazz.delete(docId);
+      const termEntry = index.postings[term];
+      if (termEntry && termEntry.postings[docId]) {
+        termEntry.postings.$jazz.delete(docId);
+        termEntry.$jazz.set("docCount", termEntry.docCount - 1);
       }
     }
     index.meta.$jazz.delete(docId);
@@ -132,9 +148,10 @@ export const upsertToInvertedIndex =
     );
 
     for (const termToRemove of termsToRemove) {
-      const posting = index.postings[termToRemove];
-      if (posting) {
-        posting.$jazz.delete(doc.id);
+      const termEntry = index.postings[termToRemove];
+      if (termEntry && termEntry.postings[doc.id]) {
+        termEntry.postings.$jazz.delete(doc.id);
+        termEntry.$jazz.set("docCount", termEntry.docCount - 1);
       }
     }
 
