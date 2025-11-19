@@ -22,7 +22,6 @@ export type QueryMeta = {
     ngramMeta: number;
     ngramSorting: number;
     candidateExpansion: number;
-    calculateCorpusMeta: number;
     qualityComputation: number;
     sorting: number;
     total: number;
@@ -263,7 +262,6 @@ export class JazzFuzzyIndex {
             ngramMeta: 0,
             ngramSorting: 0,
             candidateExpansion: 0,
-            calculateCorpusMeta: 0,
             qualityComputation: 0,
             sorting: 0,
             total: 0,
@@ -316,12 +314,9 @@ export class JazzFuzzyIndex {
     const finalCandidateSize = candidateSet.size;
 
     // Calculate corpus metadata using pre-calculated statistics
-    const corpusMetaStart = performance.now();
     const totalDocs = this.index.corpusStats.totalDocuments;
     const avgDocLength =
       totalDocs > 0 ? this.index.corpusStats.totalTermCount / totalDocs : 0;
-    const corpusMetaEnd = performance.now();
-    const corpusMetaTime = corpusMetaEnd - corpusMetaStart;
 
     // Calculate comprehensive scores
     const qualityStart = performance.now();
@@ -370,7 +365,6 @@ export class JazzFuzzyIndex {
           ngramMeta: ngramMetaTime,
           ngramSorting: ngramSortingTime,
           candidateExpansion: candidateTime,
-          calculateCorpusMeta: corpusMetaTime,
           qualityComputation: qualityTime,
           sorting: sortTime,
           total: totalTime,

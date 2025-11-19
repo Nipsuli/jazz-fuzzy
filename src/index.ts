@@ -53,7 +53,6 @@ interface QueryEvaluation {
     ngramMeta: number;
     ngramSorting: number;
     candidateExpansion: number;
-    calculateCorpusMeta: number;
     qualityComputation: number;
     sorting: number;
     total: number;
@@ -118,7 +117,7 @@ for (const query of queries) {
     `   Metrics:  P=${precision.toFixed(2)} R=${recall.toFixed(2)} F1=${f1.toFixed(2)} Top-1=${topKAccuracy ? "✓" : "✗"}`,
   );
   console.log(
-    `   Timing:   NC=${response.meta.timings.ngramCreation.toFixed(1)}ms NM=${response.meta.timings.ngramMeta.toFixed(1)}ms NS=${response.meta.timings.ngramSorting.toFixed(1)}ms C=${response.meta.timings.candidateExpansion.toFixed(1)}ms CM=${response.meta.timings.calculateCorpusMeta.toFixed(1)}ms Q=${response.meta.timings.qualityComputation.toFixed(1)}ms S=${response.meta.timings.sorting.toFixed(1)}ms`,
+    `   Timing:   NC=${response.meta.timings.ngramCreation.toFixed(1)}ms NM=${response.meta.timings.ngramMeta.toFixed(1)}ms NS=${response.meta.timings.ngramSorting.toFixed(1)}ms C=${response.meta.timings.candidateExpansion.toFixed(1)}ms Q=${response.meta.timings.qualityComputation.toFixed(1)}ms S=${response.meta.timings.sorting.toFixed(1)}ms`,
   );
   console.log(`   Candidates: ${response.meta.candidateSize}`);
 
@@ -140,7 +139,7 @@ const ngramCreationTimes = evaluations.map((e) => e.timings.ngramCreation);
 const ngramMetaTimes = evaluations.map((e) => e.timings.ngramMeta);
 const ngramSortingTimes = evaluations.map((e) => e.timings.ngramSorting);
 const candidateTimes = evaluations.map((e) => e.timings.candidateExpansion);
-const corpusMetaTimes = evaluations.map((e) => e.timings.calculateCorpusMeta);
+
 const qualityTimes = evaluations.map((e) => e.timings.qualityComputation);
 const sortTimes = evaluations.map((e) => e.timings.sorting);
 const candidateSizes = evaluations.map((e) => e.candidateSize);
@@ -157,8 +156,7 @@ const avgNgramSortingTime =
   ngramSortingTimes.length;
 const avgCandidateTime =
   candidateTimes.reduce((sum, time) => sum + time, 0) / candidateTimes.length;
-const avgCorpusMetaTime =
-  corpusMetaTimes.reduce((sum, time) => sum + time, 0) / corpusMetaTimes.length;
+
 const avgQualityTime =
   qualityTimes.reduce((sum, time) => sum + time, 0) / qualityTimes.length;
 const avgSortTime =
@@ -200,9 +198,7 @@ console.log(
 console.log(
   `Candidate expansion: ${avgCandidateTime.toFixed(2)}ms (${((avgCandidateTime / avgTotalTime) * 100).toFixed(1)}%)`,
 );
-console.log(
-  `Calculate corpus meta: ${avgCorpusMetaTime.toFixed(2)}ms (${((avgCorpusMetaTime / avgTotalTime) * 100).toFixed(1)}%)`,
-);
+
 console.log(
   `Quality computation: ${avgQualityTime.toFixed(2)}ms (${((avgQualityTime / avgTotalTime) * 100).toFixed(1)}%)`,
 );
@@ -236,7 +232,7 @@ console.log("\n🐌 Slowest Queries:");
 slowestQueries.forEach((e, i) => {
   console.log(`  ${i + 1}. "${e.query}" (${e.timings.total.toFixed(2)}ms)`);
   console.log(
-    `     NC:${e.timings.ngramCreation.toFixed(1)}ms NM:${e.timings.ngramMeta.toFixed(1)}ms NS:${e.timings.ngramSorting.toFixed(1)}ms C:${e.timings.candidateExpansion.toFixed(1)}ms CM:${e.timings.calculateCorpusMeta.toFixed(1)}ms Q:${e.timings.qualityComputation.toFixed(1)}ms S:${e.timings.sorting.toFixed(1)}ms`,
+    `     NC:${e.timings.ngramCreation.toFixed(1)}ms NM:${e.timings.ngramMeta.toFixed(1)}ms NS:${e.timings.ngramSorting.toFixed(1)}ms C:${e.timings.candidateExpansion.toFixed(1)}ms Q:${e.timings.qualityComputation.toFixed(1)}ms S:${e.timings.sorting.toFixed(1)}ms`,
   );
   console.log(`     Candidates: ${e.candidateSize}`);
 });
