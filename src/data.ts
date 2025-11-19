@@ -623,7 +623,7 @@ export const data = [
     id: "156",
     text: "Browser compatibility testing ensures consistent behavior across different platforms",
   },
-] as const;
+];
 
 export const queries = [
   // Match what the fuzzy search actually finds
@@ -795,4 +795,4 @@ export const queries = [
   { query: "proces", expectedMatches: ["1", "15", "20", "62", "74"] },
   { query: "proccess", expectedMatches: ["1", "15", "20", "62", "74"] },
   { query: "proess", expectedMatches: ["1", "15", "20", "62", "74"] },
-] as const;
+];
