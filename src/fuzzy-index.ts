@@ -122,66 +122,11 @@ export class JazzFuzzyIndex {
     return idf * tf;
   }
 
-  private calculateRelativePositionScore(
-    queryPositions: number[],
-    docPositions: number[],
-    queryLength: number,
-    _docLength: number,
-  ): number {
-    const firstQueryPosition = queryPositions[0];
-    if (!firstQueryPosition || docPositions.length === 0) {
-      return 0;
-    }
-
-    let bestScore = 0;
-
-    // For each possible starting position in the document
-    for (const startDocPos of docPositions) {
-      let currentScore = 0;
-      let consecutiveBonus = 0;
-      let lastExpectedPos = startDocPos - 1;
-
-      // Check how well query order is preserved starting from this position
-      for (const queryPos of queryPositions) {
-        const expectedDocPos = startDocPos + (queryPos - firstQueryPosition);
-
-        // Find closest actual position to expected position
-        let closestDistance = Infinity;
-        for (const docPos of docPositions) {
-          const distance = Math.abs(docPos - expectedDocPos);
-          if (distance < closestDistance) {
-            closestDistance = distance;
-          }
-        }
-
-        // Score based on how close we are to expected position
-        if (closestDistance <= 3) {
-          // Within 3 positions is good
-          const positionScore = 1 / (1 + closestDistance * 0.5);
-          currentScore += positionScore;
-
-          // Consecutive bonus if this position follows the previous one
-          const actualPos = expectedDocPos; // Simplified for now
-          if (actualPos === lastExpectedPos + 1) {
-            consecutiveBonus += 0.5;
-          }
-          lastExpectedPos = actualPos;
-        }
-      }
-
-      currentScore += consecutiveBonus;
-      bestScore = Math.max(bestScore, currentScore);
-    }
-
-    // Normalize by query length
-    return bestScore / queryLength;
-  }
-
   private calculateDocumentScore(
     docId: string,
-    matchedNgrams: Map<string, number>,
+    // to be used to check the order of things
+    _queryNgrams: string[],
     ngramMeta: Record<string, NgramMeta>,
-    queryLength: number,
     docFreqs: DocumentFrequencies,
     totalDocs: number,
     avgDocLength: number,
@@ -197,8 +142,14 @@ export class JazzFuzzyIndex {
     const matchedQueryNgrams = new Set<string>();
 
     // Calculate BM25 + position scores for each matched ngram
-    for (const [ngram, termFreq] of matchedNgrams) {
-      if (termFreq === 0) {
+    for (const ngram in ngramMeta) {
+      const meta = ngramMeta[ngram];
+      if (!meta) {
+        throw new Error("InvalidState");
+      }
+
+      const docPosting = this.index.postings[ngram]?.postings[docId];
+      if (!docPosting) {
         continue;
       }
 
@@ -207,25 +158,12 @@ export class JazzFuzzyIndex {
 
       // BM25 component
       bm25Score += this.calculateBM25Score(
-        termFreq,
+        docPosting.frequency,
         docMeta.termCount,
         avgDocLength,
         docFreq,
         totalDocs,
       );
-
-      // Position component using relative positioning
-      const queryMeta = ngramMeta[ngram];
-      const termEntry = this.index.postings[ngram];
-      const docPosting = termEntry?.postings?.[docId];
-      if (queryMeta && docPosting) {
-        positionScore += this.calculateRelativePositionScore(
-          queryMeta.positions,
-          docPosting.positions,
-          queryLength,
-          docMeta.termCount,
-        );
-      }
 
       // Rarity bonus - rare ngrams get extra weight
       if (docFreq < totalDocs * 0.01) {
@@ -277,7 +215,6 @@ export class JazzFuzzyIndex {
 
     const ngramMetaStart = performance.now();
     const ngramMeta = calculateTermMeta(ngrams);
-    const queryNgramsLength = ngrams.length;
     const uniqueQueryNgrams = Object.keys(ngramMeta);
     const ngramMetaEnd = performance.now();
     const ngramMetaTime = ngramMetaEnd - ngramMetaStart;
@@ -321,20 +258,10 @@ export class JazzFuzzyIndex {
     // Calculate comprehensive scores
     const qualityStart = performance.now();
     for (const docId of candidateSet) {
-      const matchedNgrams = new Map<string, number>();
-
-      // Collect matched ngrams for this document
-      for (const ngram of uniqueQueryNgrams) {
-        const termEntry = this.index.postings[ngram];
-        const posting = termEntry?.postings?.[docId];
-        matchedNgrams.set(ngram, posting?.frequency || 0);
-      }
-
       const score = this.calculateDocumentScore(
         docId,
-        matchedNgrams,
+        ngrams,
         ngramMeta,
-        queryNgramsLength,
         docFreqs,
         totalDocs,
         avgDocLength,

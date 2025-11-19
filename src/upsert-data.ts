@@ -64,8 +64,11 @@ const upsertData = async (
   console.log("");
 
   console.log("⏳ Waiting for all co-values to be synced...");
-  await worker.$jazz.waitForAllCoValuesSync({ timeout: 15 * 60 * 1000 });
-  console.log("✅ All co-values synced");
+  const syncStart = performance.now();
+  await worker.$jazz.waitForAllCoValuesSync({ timeout: 20 * 60 * 1000 });
+  console.log(
+    `✅ All co-values synced in ${(performance.now() - syncStart).toFixed(2)}ms`,
+  );
 
   console.log(`Id to use in queries: ${index.$jazz.id}`);
 };
