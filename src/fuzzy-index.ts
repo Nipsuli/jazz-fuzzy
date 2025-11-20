@@ -33,11 +33,6 @@ export type QueryResponse = {
   meta: QueryMeta;
 };
 
-type NgramMeta = {
-  frequency: number;
-  positions: number[];
-};
-
 type DocumentFrequencies = Map<string, number>;
 
 export class JazzFuzzyIndex {
@@ -122,77 +117,12 @@ export class JazzFuzzyIndex {
     return idf * tf;
   }
 
-  private calculateDocumentScore(
-    docId: string,
-    // to be used to check the order of things
-    _queryNgrams: string[],
-    ngramMeta: Record<string, NgramMeta>,
-    docFreqs: DocumentFrequencies,
-    totalDocs: number,
-    avgDocLength: number,
-  ): number {
-    const docMeta = this.index.docMeta[docId];
-    if (!docMeta) {
-      return 0;
-    }
-
-    let bm25Score = 0;
-    let positionScore = 0;
-    let rarityBonus = 0;
-    const matchedQueryNgrams = new Set<string>();
-
-    // Calculate BM25 + position scores for each matched ngram
-    for (const ngram in ngramMeta) {
-      const meta = ngramMeta[ngram];
-      if (!meta) {
-        throw new Error("InvalidState");
-      }
-
-      const docPosting = this.index.postings[ngram]?.postings[docId];
-      if (!docPosting) {
-        continue;
-      }
-
-      matchedQueryNgrams.add(ngram);
-      const docFreq = docFreqs.get(ngram) || 1;
-
-      // BM25 component
-      bm25Score += this.calculateBM25Score(
-        docPosting.frequency,
-        docMeta.termCount,
-        avgDocLength,
-        docFreq,
-        totalDocs,
-      );
-
-      // Rarity bonus - rare ngrams get extra weight
-      if (docFreq < totalDocs * 0.01) {
-        // Less than 1% of docs
-        rarityBonus += 0.2;
-      }
-    }
-
-    // Query coverage component
-    const coverage = matchedQueryNgrams.size / Object.keys(ngramMeta).length;
-    const coverageScore = Math.pow(coverage, 0.5); // Square root for diminishing returns
-
-    // Combined score with weights
-    const finalScore =
-      bm25Score * 0.6 + // Main relevance (60%)
-      positionScore * 0.2 + // Position bonus (20%)
-      coverageScore * 0.15 + // Coverage bonus (15%)
-      rarityBonus * 0.05; // Rarity bonus (5%)
-
-    return finalScore;
-  }
-
   query(query: string, minQuality = 0): QueryResponse {
     const queryStart = performance.now();
-    const results = [] as QueryResult[];
 
     if (query.trim().length === 0) {
       return {
-        results,
+        results: [],
         meta: {
           candidateSize: 0,
           timings: {
@@ -250,25 +180,60 @@ export class JazzFuzzyIndex {
     const candidateTime = candidateEnd - candidateStart;
     const finalCandidateSize = candidateSet.size;
 
+    const qualityStart = performance.now();
+
     // Calculate corpus metadata using pre-calculated statistics
     const totalDocs = this.index.corpusStats.totalDocuments;
     const avgDocLength =
       totalDocs > 0 ? this.index.corpusStats.totalTermCount / totalDocs : 0;
 
-    // Calculate comprehensive scores
-    const qualityStart = performance.now();
-    for (const docId of candidateSet) {
-      const score = this.calculateDocumentScore(
-        docId,
-        ngrams,
-        ngramMeta,
-        docFreqs,
-        totalDocs,
-        avgDocLength,
-      );
+    const docScores = new Map<string, number>();
+    const docCoverage = new Map<string, number>();
 
-      if (score >= minQuality) {
-        results.push({ id: docId, quality: score });
+    for (const ngram of uniqueQueryNgrams) {
+      const termEntry = this.index.postings[ngram];
+      if (!termEntry) {
+        continue;
+      }
+
+      const docFreq = docFreqs.get(ngram)!;
+
+      for (const docId in termEntry.postings) {
+        if (candidateSet.has(docId)) {
+          const docPosting = termEntry.postings[docId]!;
+          const docMeta = this.index.docMeta[docId]!;
+
+          const bm25PartialScore = this.calculateBM25Score(
+            docPosting.frequency,
+            docMeta.termCount,
+            avgDocLength,
+            docFreq,
+            totalDocs,
+          );
+
+          docScores.set(docId, (docScores.get(docId) ?? 0) + bm25PartialScore);
+          docCoverage.set(docId, (docCoverage.get(docId) ?? 0) + 1);
+        }
+      }
+    }
+
+    const results: QueryResult[] = [];
+    const numQueryNgrams = uniqueQueryNgrams.length;
+
+    for (const docId of candidateSet) {
+      const bm25Score = docScores.get(docId) || 0;
+      if (bm25Score === 0) {
+        continue;
+      }
+
+      const coverage = (docCoverage.get(docId) || 0) / numQueryNgrams;
+      const coverageScore = Math.pow(coverage, 0.5); // Diminishing returns for coverage
+
+      // Combined score with weights (TODO: make configurable)
+      const finalScore = bm25Score * 0.85 + coverageScore * 0.15;
+
+      if (finalScore >= minQuality) {
+        results.push({ id: docId, quality: finalScore });
       }
     }
 
