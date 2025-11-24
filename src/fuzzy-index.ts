@@ -126,9 +126,13 @@ export class JazzFuzzyIndex {
 
   query(
     query: string,
-    minQuality = 0,
-    profileCollector?: (profile: QueryProfile) => void,
+    options?: {
+      minQuality?: number;
+      profileCollector?: (profile: QueryProfile) => void;
+    },
   ): QueryResponse {
+    const minQuality = options?.minQuality ?? 0;
+    const profileCollector = options?.profileCollector;
     // Short-circuit empty queries.
     const profiling = Boolean(profileCollector);
     const totalStart = profiling ? performance.now() : 0;
@@ -154,20 +158,20 @@ export class JazzFuzzyIndex {
     const termStatsMs = profiling ? performance.now() - termStatsStart : 0;
 
     // 3) Choose a candidate cap adapted to term rarity so we don’t over-walk large postings.
-    const baseMaxCandidates = 200;
+    const baseMaxCandidates = 160;
     const rarestDocFreq = docFreqs.get(sortedNgrams[0] ?? "") ?? 0;
     const maxCandidates =
       rarestDocFreq > baseMaxCandidates * 2
         ? Math.max(64, Math.floor(baseMaxCandidates * 0.75))
         : baseMaxCandidates;
     const targetCandidates = Math.floor(maxCandidates * 0.9);
-    const seedTermCount = Math.min(5, sortedNgrams.length);
+    const seedTermCount = Math.min(3, sortedNgrams.length);
 
     const totalDocs = this.index.corpusStats.totalDocuments;
     const avgDocLength =
       totalDocs > 0 ? this.index.corpusStats.totalTermCount / totalDocs : 0;
 
-    const docScores = new Map<string, number>();
+    const docScores: Record<string, number> = Object.create(null);
 
     const candidates = new Set<string>();
     let postingsVisited = 0;
@@ -187,12 +191,13 @@ export class JazzFuzzyIndex {
       }
 
       const docFreq = docFreqs.get(ngram)!;
-      postingsVisited += termEntry.docCount;
+      const cachedPostings = Object.entries(termEntry.postings);
+      postingsVisited += cachedPostings.length;
 
-      const updateBudget = 64; // cap updates to existing candidates when pool is full
+      const updateBudget = 24; // tighter cap on updates when pool is full
       let updatesUsed = 0;
 
-      for (const docId in termEntry.postings) {
+      for (const [docId, docPosting] of cachedPostings) {
         const alreadyCandidate = candidates.has(docId);
         if (alreadyCandidate && candidates.size >= maxCandidates) {
           if (!allowAggressiveUpdates && updatesUsed >= updateBudget) {
@@ -203,18 +208,15 @@ export class JazzFuzzyIndex {
           continue; // pool is full; ignore new docs
         }
 
-        const docPosting = termEntry.postings[docId]!;
-        const docMeta = this.index.docMeta[docId]!;
-
         const bm25PartialScore = this.calculateBM25Score(
           docPosting.frequency,
-          docMeta.termCount,
+          this.index.docMeta[docId]?.termCount ?? 0,
           avgDocLength,
           docFreq,
           totalDocs,
         );
 
-        docScores.set(docId, (docScores.get(docId) ?? 0) + bm25PartialScore);
+        docScores[docId] = (docScores[docId] ?? 0) + bm25PartialScore;
 
         if (!alreadyCandidate) {
           candidates.add(docId);
@@ -258,7 +260,7 @@ export class JazzFuzzyIndex {
     // 4) Score and filter candidates.
     const scoringStart = profiling ? performance.now() : 0;
     for (const docId of candidates) {
-      const bm25Score = docScores.get(docId) || 0;
+      const bm25Score = docScores[docId] || 0;
       if (bm25Score === 0) {
         continue;
       }
@@ -295,7 +297,7 @@ export class JazzFuzzyIndex {
           missingTerms,
           postingsVisited,
           candidateDocs: candidates.size,
-          scoredDocs: docScores.size,
+          scoredDocs: Object.keys(docScores).length,
           resultsReturned: sortedResults.length,
         },
       });

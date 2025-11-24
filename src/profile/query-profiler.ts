@@ -79,7 +79,10 @@ const run = async () => {
     for (let i = 0; i < iterations; i++) {
       for (const query of dataset.queries) {
         const wallStart = performance.now();
-        fuzzyIndex.query(query.query, 0.01, (profile) => profiles.push(profile));
+        fuzzyIndex.query(query.query, {
+          minQuality: 0.01,
+          profileCollector: (profile) => profiles.push(profile),
+        });
         wallTimes.push(performance.now() - wallStart);
       }
     }

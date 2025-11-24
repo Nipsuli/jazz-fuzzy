@@ -60,7 +60,7 @@ console.log("=".repeat(60));
 
 for (const query of queries) {
   const startTime = performance.now();
-  const response = fuzzyIndex.query(query.query, 0.01);
+  const response = fuzzyIndex.query(query.query, { minQuality: 0.01 });
   const endTime = performance.now();
   const queryTime = endTime - startTime;
 
