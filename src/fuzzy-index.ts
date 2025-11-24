@@ -15,22 +15,8 @@ export type QueryResult = {
   quality: number;
 };
 
-export type QueryMeta = {
-  candidateSize: number;
-  timings: {
-    ngramCreation: number;
-    ngramMeta: number;
-    ngramSorting: number;
-    candidateExpansion: number;
-    qualityComputation: number;
-    sorting: number;
-    total: number;
-  };
-};
-
 export type QueryResponse = {
   results: QueryResult[];
-  meta: QueryMeta;
 };
 
 type DocumentFrequencies = Map<string, number>;
@@ -118,79 +104,34 @@ export class JazzFuzzyIndex {
   }
 
   query(query: string, minQuality = 0): QueryResponse {
-    const queryStart = performance.now();
-
     if (query.trim().length === 0) {
       return {
         results: [],
-        meta: {
-          candidateSize: 0,
-          timings: {
-            ngramCreation: 0,
-            ngramMeta: 0,
-            ngramSorting: 0,
-            candidateExpansion: 0,
-            qualityComputation: 0,
-            sorting: 0,
-            total: 0,
-          },
-        },
       };
     }
 
-    const ngramCreationStart = performance.now();
     const ngrams = this.ngrams(query);
-    const ngramCreationEnd = performance.now();
-    const ngramCreationTime = ngramCreationEnd - ngramCreationStart;
 
-    const ngramMetaStart = performance.now();
     const ngramMeta = calculateTermMeta(ngrams);
     const uniqueQueryNgrams = Object.keys(ngramMeta);
-    const ngramMetaEnd = performance.now();
-    const ngramMetaTime = ngramMetaEnd - ngramMetaStart;
 
-    const ngramSortingStart = performance.now();
     const { sortedNgrams, docFreqs } =
       this.getSortedNgramsWithCache(uniqueQueryNgrams);
-    const ngramSortingEnd = performance.now();
-    const ngramSortingTime = ngramSortingEnd - ngramSortingStart;
 
-    const candidateSet = new Set<string>();
     // TODO: make the candidate size dynamic
     const maxCandidates = 200; // Target candidate pool size
-
-    const candidateStart = performance.now();
-
-    // Process ngrams in order of rarity, expanding candidate set until we hit target size
-    for (const ngram of sortedNgrams) {
-      const termEntry = this.index.postings[ngram];
-      if (!termEntry || !termEntry.postings) {
-        // Ngram not found - skip this ngram
-        continue;
-      }
-      for (const docId of Object.keys(termEntry.postings)) {
-        candidateSet.add(docId);
-      }
-      if (candidateSet.size >= maxCandidates) {
-        break;
-      }
-    }
-
-    const candidateEnd = performance.now();
-    const candidateTime = candidateEnd - candidateStart;
-    const finalCandidateSize = candidateSet.size;
-
-    const qualityStart = performance.now();
-
-    // Calculate corpus metadata using pre-calculated statistics
     const totalDocs = this.index.corpusStats.totalDocuments;
     const avgDocLength =
       totalDocs > 0 ? this.index.corpusStats.totalTermCount / totalDocs : 0;
+    const numQueryNgrams = uniqueQueryNgrams.length;
 
     const docScores = new Map<string, number>();
     const docCoverage = new Map<string, number>();
 
-    for (const ngram of uniqueQueryNgrams) {
+    const candidates = new Set<string>();
+
+    // Process ngrams in order of rarity, building candidates and partial scores in one pass
+    for (const ngram of sortedNgrams) {
       const termEntry = this.index.postings[ngram];
       if (!termEntry) {
         continue;
@@ -199,35 +140,41 @@ export class JazzFuzzyIndex {
       const docFreq = docFreqs.get(ngram)!;
 
       for (const docId in termEntry.postings) {
-        if (candidateSet.has(docId)) {
-          const docPosting = termEntry.postings[docId]!;
-          const docMeta = this.index.docMeta[docId]!;
+        const alreadyCandidate = candidates.has(docId);
+        if (!alreadyCandidate && candidates.size >= maxCandidates) {
+          continue; // pool is full; ignore new docs
+        }
 
-          const bm25PartialScore = this.calculateBM25Score(
-            docPosting.frequency,
-            docMeta.termCount,
-            avgDocLength,
-            docFreq,
-            totalDocs,
-          );
+        const docPosting = termEntry.postings[docId]!;
+        const docMeta = this.index.docMeta[docId]!;
 
-          docScores.set(docId, (docScores.get(docId) ?? 0) + bm25PartialScore);
-          docCoverage.set(docId, (docCoverage.get(docId) ?? 0) + 1);
+        const bm25PartialScore = this.calculateBM25Score(
+          docPosting.frequency,
+          docMeta.termCount,
+          avgDocLength,
+          docFreq,
+          totalDocs,
+        );
+
+        docScores.set(docId, (docScores.get(docId) ?? 0) + bm25PartialScore);
+        docCoverage.set(docId, (docCoverage.get(docId) ?? 0) + 1);
+
+        if (!alreadyCandidate) {
+          candidates.add(docId);
         }
       }
     }
 
     const results: QueryResult[] = [];
-    const numQueryNgrams = uniqueQueryNgrams.length;
 
-    for (const docId of candidateSet) {
+    for (const docId of candidates) {
       const bm25Score = docScores.get(docId) || 0;
       if (bm25Score === 0) {
         continue;
       }
 
       const coverage = (docCoverage.get(docId) || 0) / numQueryNgrams;
-      const coverageScore = Math.pow(coverage, 0.5); // Diminishing returns for coverage
+      const coverageScore = Math.sqrt(coverage); // Diminishing returns for coverage
 
       // Combined score with weights (TODO: make configurable)
       const finalScore = bm25Score * 0.85 + coverageScore * 0.15;
@@ -237,31 +184,10 @@ export class JazzFuzzyIndex {
       }
     }
 
-    const qualityEnd = performance.now();
-    const qualityTime = qualityEnd - qualityStart;
-
-    const sortStart = performance.now();
     const sortedResults = results.sort((a, b) => b.quality - a.quality);
-    const sortEnd = performance.now();
-    const sortTime = sortEnd - sortStart;
-
-    const queryEnd = performance.now();
-    const totalTime = queryEnd - queryStart;
 
     return {
       results: sortedResults,
-      meta: {
-        candidateSize: finalCandidateSize,
-        timings: {
-          ngramCreation: ngramCreationTime,
-          ngramMeta: ngramMetaTime,
-          ngramSorting: ngramSortingTime,
-          candidateExpansion: candidateTime,
-          qualityComputation: qualityTime,
-          sorting: sortTime,
-          total: totalTime,
-        },
-      },
     };
   }
 }
